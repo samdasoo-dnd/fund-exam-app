@@ -11,7 +11,7 @@
 | 앱 이름 | 펀드 모의고사 |
 | applicationId | `com.donsik.fundexam` |
 | minSdk / targetSdk / compileSdk | 24 / 34 / 34 |
-| versionCode / versionName | 1 / `1.0.0` |
+| versionCode / versionName | 2 / `1.0.1` |
 | 빌드 | Gradle 8.7 · AGP 8.5.1 · Kotlin 1.9.24 · JDK 17 |
 | 서명 | 고정 릴리스 키 (CN=BadaToeic, O=Donsik, C=KR) · 키 없으면 debug 폴백 |
 
@@ -21,17 +21,23 @@
   - 다크 네이비(`#061124`) 미니멀 화면 — `P` 마크 + `펀드 모의고사` 제목
     + `펀드투자권유자문인력 · 실전 모의고사` 부제 + **얇은 슬림 프로그레스 바** + `서버 연결 중…`
   - 서버가 깨어나기 전까지 약 45초에 걸쳐 92%까지 차오르고, `window.finishLoading()` 호출 시 0.4초 만에 100%
+  - 92%에 닿은 뒤에도 반짝임(shimmer)·호흡 애니메이션이 계속 살아 있고,
+    15초·30초·50초(90초) 경과 시 안내 문구가 바뀐다
   - `window.stopLoadingAnimation()` 으로 오버레이가 걷힌 뒤 애니메이션을 멈춘다(배터리 절약)
 - Render 무료 플랜 콜드 스타트 동안 메인 페이지를 바로 열지 않고,
-  백그라운드 스레드에서 `GET /api/health` 를 **2초 간격·최대 90초** 두드린다
+  백그라운드 스레드에서 `GET /api/health` 를 **2초 간격·최대 2분(120초)** 두드린다
   - health 는 **200 이면서 본문에 `"ok":true`** 가 있어야 "깨어남"으로 판정한다(반쯤 뜬 응답 무시)
-  - 502/503/타임아웃은 Render 가 깨어나는 중이므로 오류 화면 없이 계속 재시도
+  - 502/503 과 **응답 지연(`SocketTimeoutException`, `HEALTH_SERVER_WAKING`)** 은 Render 가 깨어나는 중이므로
+    실패 횟수에 넣지 않고 오류 화면 없이 계속 재시도 (연결 10초·읽기 12초)
   - 200(+`ok:true`) 이 오면 그때 `https://fund-exam-app.onrender.com` 을 메인 WebView 로 연다
-  - 메인 페이지가 503/타임아웃으로 실패해도 로딩 화면이 떠 있는 동안(총 90초 이내)에는
+  - 메인 페이지가 503/타임아웃으로 실패해도 로딩 화면이 떠 있는 동안(총 2분 이내)에는
     로딩 오버레이·프로그레스 바를 **그대로 둔 채**(0% 리셋 없음) 2초 뒤 health 부터 다시 확인한다
   - 503 페이지의 `onPageFinished` 는 `attemptFailed` 플래그로 걸러 "다 그려짐"으로 처리하지 않는다
+  - **메인 로드 워치독(25초)**: `loadUrl()` 뒤 25초 안에 화면이 뜨지 않으면 `stopLoading()` 후 재시도한다
+  - `onPageFinished` 뒤에는 실제 DOM 이 비어 있지 않은지 확인한 다음에만 로딩을 마무리한다
+  - 로딩 오버레이 페이드아웃이 취소돼도 오버레이는 반드시 걷히도록 안전장치가 있다
   - 메인 페이지 `onPageFinished` 후(로딩 화면 최소 1.5초 노출) 바를 100%로 채우고 오버레이를 페이드아웃
-  - 오류 화면은 네트워크가 계속 끊겨 있을 때(연속 6회 실패≈12초) 또는 로딩 화면을 띄운 지 90초를 넘겼을 때만
+  - 오류 화면은 네트워크가 계속 끊겨 있을 때(연속 6회 실패≈12초) 또는 로딩 화면을 띄운 지 2분을 넘겼을 때만
 - `localStorage`(`domStorageEnabled`, 키 `fundExam.v1`), 쿠키, 혼합 콘텐츠 허용
 - 학습 기록을 `SharedPreferences`(`fund_exam_store`)에도 `commit()` 동기 저장
   (`BadaToeicAndroid.saveStore`/`loadStore` — 웹앱 `app.js` 의 브리지 이름과 동일)
@@ -46,9 +52,9 @@
 GitHub Actions 가 `.github/workflows/build-apk.yml` 로 자동 빌드합니다.
 (Actions 탭 → **Build Android APK** → Run workflow, 또는 `android/**` 변경 push)
 
-산출물: `fund-exam-v1.0.0.apk`
-- Actions 실행의 Artifacts(`fund-exam-v1.0.0-apk`)
-- Release 태그 `v1.0.0` 에도 첨부
+산출물: `fund-exam-v1.0.1.apk`
+- Actions 실행의 Artifacts(`fund-exam-v1.0.1-apk`)
+- Release 태그 `v1.0.1` 에도 첨부
 
 ## 서명 (고정 키)
 
