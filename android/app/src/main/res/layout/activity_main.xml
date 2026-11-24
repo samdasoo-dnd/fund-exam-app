@@ -61,7 +61,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="22dp"
                 android:indeterminate="true"
-                android:indeterminateTint="@color/fund_teal" />
+                android:indeterminateTint="@color/fund_sky" />
 
             <TextView
                 android:layout_width="match_parent"
@@ -120,7 +120,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="28dp"
-            android:backgroundTint="@color/fund_teal"
+            android:backgroundTint="@color/fund_sky"
             android:minWidth="180dp"
             android:paddingLeft="28dp"
             android:paddingRight="28dp"
