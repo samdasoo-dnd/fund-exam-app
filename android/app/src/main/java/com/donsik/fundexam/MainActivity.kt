@@ -45,11 +45,15 @@ import java.util.concurrent.atomic.AtomicInteger
  * 펀드 모의고사(https://fund-exam-app.onrender.com) 를 감싸는 WebView 앱.
  *
  * - 앱을 켜면 곧바로(0.1초) assets/loading.html 의 미니멀 다크 로딩 화면(제목 + 슬림 프로그레스 바)을 띄운다.
- * - 그동안 백그라운드에서 /api/health 를 2초 간격·최대 90초 동안 두드려
+ * - 그동안 백그라운드에서 /api/health 를 2초 간격·최대 2분(120초) 동안 두드려
  *   Render 무료 플랜의 콜드 스타트(502/503/타임아웃)를 기다린 뒤 메인 페이지를 연다.
  *   health 는 200 이면서 본문에 "ok":true 가 있어야 "깨어남"으로 판정한다.
- * - 메인 페이지가 503/타임아웃으로 실패해도 로딩 화면이 떠 있는 동안(총 90초 이내)에는
+ *   응답 헤더가 늦는 SocketTimeoutException 은 '인터넷 끊김'이 아니라 '서버가 깨어나는 중'
+ *   (HEALTH_SERVER_WAKING)으로 보고, 실패 횟수에 넣지 않은 채 계속 기다린다.
+ * - 메인 페이지가 503/타임아웃으로 실패해도 로딩 화면이 떠 있는 동안(총 2분 이내)에는
  *   오류 화면을 띄우지 않고 로딩 화면 그대로 둔 채 2초 뒤 다시 health 부터 확인한다.
+ * - loadUrl 직후 WebView 가 응답 없이 멈추는 경우를 잡기 위해 메인 로드에도
+ *   MAIN_LOAD_TIMEOUT_MS(25초) 워치독을 건다. 워치독이 울리면 stopLoading 후 재시도한다.
  * - 메인 페이지가 그려지면 프로그레스 바를 100%로 채우고 오버레이를 부드럽게 걷는다.
  * - localStorage(domStorage), LC 음성 자동 재생, 쿠키/혼합 콘텐츠를 허용한다.
  * - 학습 기록은 localStorage + SharedPreferences(fund_exam_store)에 함께 저장한다.
@@ -63,20 +67,30 @@ class MainActivity : Activity() {
         private const val START_URL = "https://fund-exam-app.onrender.com"
         private const val BASE_HOST = "fund-exam-app.onrender.com"
         private const val HEALTH_URL = "https://fund-exam-app.onrender.com/api/health"
-        private const val USER_AGENT = "FundExamAndroid/1.0.0"
+        private const val USER_AGENT = "FundExamAndroid/1.0.1"
         private const val LOCAL_LOADING_URL = "file:///android_asset/loading.html"
         private const val REQ_SAVE_FILE = 1001
         private const val STORE_PREFS = "fund_exam_store"
         private const val STORE_KEY = "store_json"
 
-        // 서버 깨우기: 2초 간격 · 최대 90초 (로딩 화면이 떠 있는 총 시간 기준)
+        // 서버 깨우기: 2초 간격 · 최대 2분 (로딩 화면이 떠 있는 총 시간 기준)
         private const val WAKEUP_INTERVAL_MS = 2_000L
-        private const val WAKEUP_MAX_MS = 90_000L
-        private const val HEALTH_CONNECT_TIMEOUT_MS = 8_000
-        private const val HEALTH_READ_TIMEOUT_MS = 8_000
+        private const val WAKEUP_MAX_MS = 120_000L
+
+        // Render 무료 플랜은 잠에서 깰 때 TCP 연결만 맺고 응답 헤더를 한참 뒤에 준다.
+        // 8초는 너무 짧아 '인터넷 끊김'으로 오해됐으므로 넉넉히 잡는다.
+        private const val HEALTH_CONNECT_TIMEOUT_MS = 10_000
+        private const val HEALTH_READ_TIMEOUT_MS = 12_000
 
         // 네트워크가 이만큼 연속으로 끊기면 그때만 오류 화면을 띄운다(약 12초)
         private const val NETWORK_FAIL_LIMIT = 6
+
+        // loadUrl 이후 이 시간 안에 화면(contentShown)이 뜨지 않으면
+        // WebView 가 멈춘 것으로 보고 stopLoading → 재시도한다. (로딩 화면 영구 멈춤 방지)
+        private const val MAIN_LOAD_TIMEOUT_MS = 25_000L
+
+        // onPageFinished 뒤 실제 DOM 이 비어 있지 않은지 확인할 때의 유예 시간
+        private const val CONTENT_CHECK_DELAY_MS = 1_200L
 
         // 로딩 화면 최소 노출 시간과, 100%까지 차오르는 프로그레스 바를 보여 주는 시간
         private const val INTRO_MIN_MS = 1_500L
@@ -90,6 +104,9 @@ class MainActivity : Activity() {
 
         // probeHealth() 결과: 200 이지만 본문이 아직 준비되지 않은 경우
         private const val HEALTH_NOT_READY = -2
+
+        // probeHealth() 결과: 연결은 됐지만 응답이 늦음 — 서버가 깨어나는 중(네트워크 끊김 아님)
+        private const val HEALTH_SERVER_WAKING = -3
     }
 
     private lateinit var webView: WebView
@@ -118,7 +135,16 @@ class MainActivity : Activity() {
     @Volatile
     private var attemptFailed = false
 
-    /** 로딩 화면(첫 화면)을 띄운 시각 — 90초 총 경과 시간을 재는 기준점. 재시도해도 리셋하지 않는다. */
+    /** 메인 로드 워치독 — loadUrl 이후 화면이 뜨지 않으면 재시도로 넘긴다. */
+    private var mainLoadWatchdog: Runnable? = null
+
+    /** onPageFinished 뒤 DOM 점검을 두 번까지 미루기 위한 세대 번호. */
+    private val contentCheckToken = AtomicInteger(0)
+
+    /** 로딩 오버레이를 걷는 동작의 세대 번호 — 애니메이션이 취소돼도 오버레이를 반드시 걷는다. */
+    private var overlayToken = 0
+
+    /** 로딩 화면(첫 화면)을 띄운 시각 — 2분 총 경과 시간을 재는 기준점. 재시도해도 리셋하지 않는다. */
     private var introStartedAt = 0L
     private var loadingShownAt = 0L
     private var pendingSave: PendingSave? = null
@@ -257,6 +283,8 @@ class MainActivity : Activity() {
         introFinished = false
         retryWakeupScheduled = false
         attemptFailed = false
+        contentCheckToken.incrementAndGet()
+        cancelMainLoadWatchdog()
         showLoading()
         startServerWakeup(resetTimer = true)
     }
@@ -270,6 +298,7 @@ class MainActivity : Activity() {
 
     private fun showLoading() {
         loadingText.text = getString(R.string.loading_title)
+        overlayToken++
         loadingOverlay.animate().cancel()
         loadingOverlay.alpha = 1f
         loadingOverlay.visibility = View.VISIBLE
@@ -281,18 +310,32 @@ class MainActivity : Activity() {
     private fun hideLoading(immediately: Boolean = false) {
         if (loadingOverlay.visibility != View.VISIBLE) return
         if (immediately) {
-            stopIntroAnimation()
-            loadingOverlay.visibility = View.GONE
+            forceHideOverlay()
             return
         }
+        val token = ++overlayToken
+        loadingOverlay.animate().cancel()
         loadingOverlay.animate()
             .alpha(0f)
             .setDuration(280)
-            .withEndAction {
-                loadingOverlay.visibility = View.GONE
-                stopIntroAnimation()
-            }
+            .withEndAction { if (token == overlayToken) forceHideOverlay() }
             .start()
+        // 안전장치: 다른 애니메이션에 밀리거나 취소돼 withEndAction 이 불리지 않아도
+        // 로딩 오버레이는 반드시 걷힌다(로딩 화면에 갇히는 현상 방지).
+        uiHandler.postDelayed({
+            if (token == overlayToken && loadingOverlay.visibility == View.VISIBLE) {
+                Log.w(TAG, "loading overlay still visible -> force hide")
+                forceHideOverlay()
+            }
+        }, 900L)
+    }
+
+    /** 로딩 오버레이를 애니메이션 없이 즉시 걷고, 내장 로딩 화면의 애니메이션을 멈춘다. */
+    private fun forceHideOverlay() {
+        runCatching { loadingOverlay.animate().cancel() }
+        loadingOverlay.alpha = 0f
+        loadingOverlay.visibility = View.GONE
+        stopIntroAnimation()
     }
 
     /** 오버레이가 사라진 뒤 로딩 화면의 애니메이션 루프를 멈춰 배터리를 아낀다. */
@@ -309,10 +352,10 @@ class MainActivity : Activity() {
     /**
      * Render 무료 플랜은 15분 미사용 시 잠들어 첫 요청에 502/503 또는 타임아웃이 난다.
      * 메인 페이지를 곧바로 열면 그 오류를 그대로 맞으므로, /api/health 가 200(+ok:true) 을 줄 때까지
-     * 2초 간격으로 최대 90초 동안 백그라운드에서 두드린다. 그동안 로딩 화면이 계속 떠 있다.
+     * 2초 간격으로 최대 2분(120초) 동안 백그라운드에서 두드린다. 그동안 로딩 화면이 계속 떠 있다.
      *
      * resetTimer=false 는 메인 페이지가 503·타임아웃으로 실패한 뒤의 재확인이다.
-     * 이때는 로딩 화면을 띄운 시각(introStartedAt)을 그대로 이어 받아 90초를 새로 주지 않는다.
+     * 이때는 로딩 화면을 띄운 시각(introStartedAt)을 그대로 이어 받아 2분을 새로 주지 않는다.
      */
     private fun startServerWakeup(resetTimer: Boolean = true) {
         cancelServerWakeup()            // 이전 스레드 정리
@@ -331,7 +374,7 @@ class MainActivity : Activity() {
                             !contentShown && !mainFrameFailed
                         ) {
                             showError(
-                                "서버가 아직 깨어나지 않았어요. (90초 초과)\n" +
+                                "서버가 아직 깨어나지 않았어요. (2분 초과)\n" +
                                     "잠시 뒤 다시 시도해 주세요."
                             )
                         }
@@ -360,7 +403,11 @@ class MainActivity : Activity() {
                         break@wakeup
                     }
                 } else {
-                    // 502/503 등 Render 가 깨어나는 중 — 오류 화면 없이 계속 재시도
+                    // 502/503·응답 지연(HEALTH_SERVER_WAKING) 등 Render 가 깨어나는 중
+                    // — 오류 화면 없이 계속 재시도하고, 네트워크 끊김 횟수도 늘리지 않는다.
+                    if (code == HEALTH_SERVER_WAKING) {
+                        Log.i(TAG, "server waking (slow response) — keep waiting")
+                    }
                     networkFails = 0
                 }
 
@@ -389,7 +436,8 @@ class MainActivity : Activity() {
 
     /**
      * 상태 확인. 200 이고 본문에 "ok":true 가 있어야만 깨어난 것(200)으로 본다.
-     * 200 이어도 본문이 아직 준비되지 않았으면 -2, 네트워크 자체가 끊겼으면 -1.
+     * 200 이어도 본문이 아직 준비되지 않았으면 -2, 응답이 늦어 서버가 깨어나는 중이면 -3,
+     * 네트워크 자체가 끊겼으면 -1.
      */
     private fun probeHealth(): Int {
         var opened: HttpURLConnection? = null
@@ -415,8 +463,10 @@ class MainActivity : Activity() {
                 code
             }
         } catch (e: SocketTimeoutException) {
-            Log.d(TAG, "health timeout: ${e.message}")
-            HEALTH_NETWORK_ERROR
+            // Render 콜드 스타트: 연결은 됐지만 응답 헤더가 늦다 = 서버가 깨어나는 중.
+            // 인터넷 끊김(HEALTH_NETWORK_ERROR)과 구분해 계속 기다린다.
+            Log.d(TAG, "health timeout (server waking): ${e.message}")
+            HEALTH_SERVER_WAKING
         } catch (e: IOException) {
             Log.d(TAG, "health io: ${e.message}")
             HEALTH_NETWORK_ERROR
@@ -441,13 +491,48 @@ class MainActivity : Activity() {
     private fun beginMainLoad() {
         if (destroyed || mainFrameFailed || contentShown) return
         Log.i(TAG, "server awake -> load $START_URL")
+        attemptFailed = false
+        retryWakeupScheduled = false
         webView.loadUrl(START_URL)
+        // loadUrl 직후 WebView 가 응답 없이 멈추면(예: onPageFinished 가 오지 않음)
+        // 워치독 없이는 로딩 화면에 영원히 갇힌다 — 반드시 타이머를 건다.
+        startMainLoadWatchdog()
+    }
+
+    /** 메인 페이지 로드 워치독: MAIN_LOAD_TIMEOUT_MS 안에 화면이 뜨지 않으면 재시도한다. */
+    private fun startMainLoadWatchdog() {
+        cancelMainLoadWatchdog()
+        val watchdog = Runnable {
+            if (destroyed || contentShown || attemptFailed ||
+                errorView.visibility == View.VISIBLE
+            ) {
+                return@Runnable
+            }
+            Log.w(TAG, "main load watchdog fired (no content in ${MAIN_LOAD_TIMEOUT_MS}ms)")
+            attemptFailed = true
+            runCatching { webView.stopLoading() }
+            if (!scheduleWakeupRetry()) {
+                showError(
+                    "페이지가 응답하지 않아요. (${MAIN_LOAD_TIMEOUT_MS / 1000}초 초과)\n" +
+                        "잠시 뒤 다시 시도해 주세요."
+                )
+            }
+        }
+        mainLoadWatchdog = watchdog
+        uiHandler.postDelayed(watchdog, MAIN_LOAD_TIMEOUT_MS)
+        Log.d(TAG, "main load watchdog armed (${MAIN_LOAD_TIMEOUT_MS}ms)")
+    }
+
+    private fun cancelMainLoadWatchdog() {
+        mainLoadWatchdog?.let { uiHandler.removeCallbacks(it) }
+        mainLoadWatchdog = null
     }
 
     /** 메인 페이지가 다 그려졌다: 로딩 화면을 최소 1.5초 보여 준 뒤 바를 100%로 채우고 걷는다. */
     private fun finishIntroWhenReady() {
         if (introFinished || errorView.visibility == View.VISIBLE) return
         introFinished = true
+        cancelMainLoadWatchdog()
         cancelServerWakeup()
 
         val shownFor = System.currentTimeMillis() - loadingShownAt
@@ -462,14 +547,23 @@ class MainActivity : Activity() {
             uiHandler.postDelayed({
                 if (!destroyed) hideLoading()
             }, BAR_FINISH_MS)
+            // 안전장치: 어떤 이유로 hideLoading 이 불리지 못해도 오버레이는 걷힌다.
+            uiHandler.postDelayed({
+                if (!destroyed && contentShown && loadingOverlay.visibility == View.VISIBLE) {
+                    Log.w(TAG, "overlay not hidden after finish -> force hide")
+                    forceHideOverlay()
+                }
+            }, BAR_FINISH_MS + 700L)
         }, wait)
     }
 
     private fun showError(detail: String?) {
         if (mainFrameFailed) return
         mainFrameFailed = true
+        cancelMainLoadWatchdog()
         cancelServerWakeup()
         stopIntroAnimation()
+        overlayToken++
         loadingOverlay.animate().cancel()
         loadingOverlay.visibility = View.GONE
         errorDetail.text = detail?.takeIf { it.isNotBlank() }
@@ -498,8 +592,9 @@ class MainActivity : Activity() {
             super.onPageStarted(view, url, favicon)
             if (url != null && url.startsWith("http")) {
                 mainFrameFailed = false
-                // 새 시도 시작 — 이전 시도의 실패 표시를 지운다
+                // 새 시도 시작 — 이전 시도의 실패 표시·DOM 점검 콜백을 지운다
                 attemptFailed = false
+                contentCheckToken.incrementAndGet()
             }
         }
 
@@ -509,8 +604,9 @@ class MainActivity : Activity() {
             // 절대 "다 그려졌다"로 처리하지 않는다(로딩 화면 유지 → 재시도).
             if (errorView.visibility != View.VISIBLE && !attemptFailed) {
                 if (url != null && url.contains(BASE_HOST)) {
-                    contentShown = true
-                    finishIntroWhenReady()
+                    // WebView 가 "다 그렸다"고 해도 실제 DOM 이 비어 있을 수 있다(빈 화면).
+                    // 내용이 확인된 뒤에만 contentShown 으로 넘긴다.
+                    verifyContentThenFinish(view)
                 } else {
                     hideLoading()
                 }
@@ -568,6 +664,59 @@ class MainActivity : Activity() {
             return true
         }
 
+        /** onPageFinished 뒤 DOM 이 실제로 그려졌는지 확인하고, 확인되면 로딩을 마무리한다. */
+        private fun verifyContentThenFinish(view: WebView?) {
+            if (view == null || contentShown) return
+            val token = contentCheckToken.incrementAndGet()
+            checkDomOnce(view, token, retried = false)
+        }
+
+        private fun checkDomOnce(view: WebView, token: Int, retried: Boolean) {
+            val js = """
+                (function(){
+                  try {
+                    var app = document.getElementById('app');
+                    var text = ((app && app.innerText) || document.body.innerText || '').trim();
+                    var nodes = document.body ? document.body.getElementsByTagName('*').length : 0;
+                    return (text.length + ':' + nodes);
+                  } catch (e) { return '0:0'; }
+                })();
+            """.trimIndent()
+            view.evaluateJavascript(js) { raw ->
+                if (destroyed || contentShown || attemptFailed ||
+                    errorView.visibility == View.VISIBLE || token != contentCheckToken.get()
+                ) {
+                    return@evaluateJavascript
+                }
+                val cleaned = (raw ?: "").trim().trim('"')
+                val parts = cleaned.split(":")
+                val textLen = parts.getOrNull(0)?.toIntOrNull() ?: 0
+                val nodeCount = parts.getOrNull(1)?.toIntOrNull() ?: 0
+                val hasContent = textLen >= 20 || nodeCount >= 12
+                Log.d(TAG, "dom check text=$textLen nodes=$nodeCount ok=$hasContent retried=$retried")
+                if (hasContent) {
+                    contentShown = true
+                    cancelMainLoadWatchdog()
+                    finishIntroWhenReady()
+                } else if (!retried) {
+                    // 스크립트가 조금 늦게 그리는 경우가 있어 한 번만 더 본다
+                    uiHandler.postDelayed({
+                        if (!destroyed && !contentShown && token == contentCheckToken.get()) {
+                            checkDomOnce(view, token, retried = true)
+                        }
+                    }, CONTENT_CHECK_DELAY_MS)
+                } else {
+                    // 빈 화면 — 이 시도는 실패로 보고 재시도한다(워치독도 그대로 살아 있다).
+                    Log.w(TAG, "main page finished but DOM looks empty -> retry")
+                    attemptFailed = true
+                    runCatching { view.stopLoading() }
+                    if (!scheduleWakeupRetry()) {
+                        showError("페이지가 비어 있어요.\n잠시 뒤 다시 시도해 주세요.")
+                    }
+                }
+            }
+        }
+
         private fun describeError(code: Int, desc: String?): String = when (code) {
             WebViewClient.ERROR_HOST_LOOKUP -> "서버 주소를 찾지 못했어요.\n인터넷 연결을 확인해 주세요."
             WebViewClient.ERROR_CONNECT -> "서버에 연결하지 못했어요.\n네트워크 상태를 확인해 주세요."
@@ -582,11 +731,11 @@ class MainActivity : Activity() {
     // ---------------------------------------------------------------- 오류 / 재시도
 
     /**
-     * 메인 페이지가 503·타임아웃으로 실패했을 때, 로딩 화면이 떠 있는 동안(총 90초 이내)에는
+     * 메인 페이지가 503·타임아웃으로 실패했을 때, 로딩 화면이 떠 있는 동안(총 2분 이내)에는
      * 오류 화면을 띄우지 않고 **로딩 오버레이·로딩 화면을 그대로 둔 채**
      * 2초 뒤 /api/health 부터 다시 확인한다. (프로그레스 바가 0%로 리셋되지 않는다)
      *
-     * @return true = 재시도로 넘겼다(오류 화면을 띄우지 않는다), false = 90초를 넘겨 오류 화면으로 간다
+     * @return true = 재시도로 넘겼다(오류 화면을 띄우지 않는다), false = 2분을 넘겨 오류 화면으로 간다
      */
     private fun scheduleWakeupRetry(): Boolean {
         if (destroyed || contentShown) return false
@@ -594,6 +743,7 @@ class MainActivity : Activity() {
         if (introStartedAt <= 0L || elapsed >= WAKEUP_MAX_MS) return false
         if (retryWakeupScheduled) return true
         retryWakeupScheduled = true
+        cancelMainLoadWatchdog()
         Log.i(TAG, "main frame failed during intro (${elapsed}ms) -> health re-check in 2s")
         uiHandler.postDelayed({
             if (destroyed) return@postDelayed
