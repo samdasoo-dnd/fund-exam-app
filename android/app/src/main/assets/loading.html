@@ -39,6 +39,7 @@
     font-size: 26px; font-weight: 800; line-height: 44px;
     letter-spacing: 0.5px;
     box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+    animation: markBreath 3.4s ease-in-out infinite;
   }
   h1 {
     margin: 18px 0 0;
@@ -56,19 +57,36 @@
     border-radius: 3px;
     background: rgba(56, 189, 248, 0.14);
     overflow: hidden;
+    animation: barBreath 3.2s ease-in-out infinite;
   }
   .bar > i {
     display: block; height: 100%; width: 0%;
     border-radius: 3px;
     background: linear-gradient(90deg, #1d6fa5, var(--sky), var(--sky-soft));
     transition: width 0.45s cubic-bezier(0.22, 0.61, 0.36, 1);
+    position: relative;
+    overflow: hidden;
+  }
+  /* 92%에서 멈춰 보이지 않게, 채워진 바 위로 반짝임이 계속 흐른다. */
+  .bar > i::after {
+    content: "";
+    position: absolute; top: 0; left: -45%;
+    width: 45%; height: 100%;
+    background: linear-gradient(90deg,
+      rgba(255, 255, 255, 0) 0%,
+      rgba(255, 255, 255, 0.85) 50%,
+      rgba(255, 255, 255, 0) 100%);
+    animation: shimmer 1.7s ease-in-out infinite;
   }
   .status {
     margin-top: 14px;
     font-size: 12px; letter-spacing: 0.2px;
     color: var(--text-dim);
     min-height: 16px;
+    transition: opacity 0.25s ease;
   }
+  .status.swap { opacity: 0; }
+  .dots { margin-left: 2px; }
   .dots::after {
     content: "";
     animation: dots 1.6s steps(4, end) infinite;
@@ -79,9 +97,24 @@
     50% { content: ".."; }
     75% { content: "..."; }
   }
+  @keyframes shimmer {
+    0% { left: -45%; }
+    100% { left: 100%; }
+  }
+  @keyframes barBreath {
+    0%, 100% { box-shadow: 0 0 0 rgba(56, 189, 248, 0); }
+    50% { box-shadow: 0 0 12px rgba(56, 189, 248, 0.3); }
+  }
+  @keyframes markBreath {
+    0%, 100% { transform: translateY(0); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35); }
+    50% { transform: translateY(-2px); box-shadow: 0 9px 22px rgba(56, 189, 248, 0.22); }
+  }
   @media (prefers-reduced-motion: reduce) {
     .dots::after { animation: none; content: "..."; }
     .bar > i { transition: none; }
+    .bar > i::after { animation: none; opacity: 0.35; }
+    .bar { animation: none; }
+    .mark { animation: none; }
   }
 </style>
 </head>
@@ -91,7 +124,7 @@
     <h1>펀드 모의고사</h1>
     <p class="sub">펀드투자권유자문인력 · 실전 모의고사</p>
     <div class="bar"><i id="fill"></i></div>
-    <div class="status" id="status">서버 연결 중<span class="dots"></span></div>
+    <div class="status" id="status"><span id="statusText">서버 연결 중</span><span class="dots"></span></div>
   </div>
 
 <script>
@@ -99,16 +132,51 @@
     "use strict";
     var fill = document.getElementById("fill");
     var status = document.getElementById("status");
+    var statusText = document.getElementById("statusText");
     var value = 0;
     var finished = false;
     var timer = null;
+    var stageTimer = null;
+    var stageAt = 0;
 
     function paint(next) {
       value = Math.max(0, Math.min(100, next));
       fill.style.width = value.toFixed(1) + "%";
     }
 
+    // 경과 시간에 따라 안내 문구를 바꾼다 — 멈춘 것처럼 보이지 않게.
+    var STAGES = [
+      { at: 0, text: "서버 연결 중" },
+      { at: 15000, text: "잠든 서버를 깨우고 있어요" },
+      { at: 30000, text: "조금만 더 기다려 주세요 · 최대 2분" },
+      { at: 50000, text: "거의 다 됐어요 · 곧 화면이 열립니다" },
+      { at: 90000, text: "네트워크가 느린 것 같아요 · 계속 확인 중" }
+    ];
+
+    function setStage(text) {
+      if (!status || !statusText || finished) return;
+      if (statusText.textContent === text) return;
+      status.classList.add("swap");
+      setTimeout(function () {
+        if (!statusText) return;
+        statusText.textContent = text;
+        status.classList.remove("swap");
+      }, 180);
+    }
+
+    function nextStage() {
+      if (finished) return;
+      stageAt += 1;
+      if (stageAt >= STAGES.length) return;
+      setStage(STAGES[stageAt].text);
+      stageTimer = setTimeout(nextStage, STAGES[stageAt].at - STAGES[stageAt - 1].at);
+    }
+    if (STAGES.length > 1) {
+      stageTimer = setTimeout(nextStage, STAGES[1].at);
+    }
+
     // 서버가 깨어나기 전까지 약 45초에 걸쳐 92%까지 천천히 차오른다.
+    // 92%에 닿은 뒤에도 반짝임·호흡 애니메이션은 계속 살아 있다.
     var step = 0;
     timer = setInterval(function () {
       if (finished) return;
@@ -122,13 +190,16 @@
       if (finished) return;
       finished = true;
       if (timer) { clearInterval(timer); timer = null; }
+      if (stageTimer) { clearTimeout(stageTimer); stageTimer = null; }
       paint(100);
-      if (status) status.textContent = "준비 완료";
+      if (statusText) statusText.textContent = "준비 완료";
+      if (status) status.classList.remove("swap");
     };
 
     // 오버레이가 걷힌 뒤 애니메이션을 멈춘다(배터리 절약).
     window.stopLoadingAnimation = function () {
       if (timer) { clearInterval(timer); timer = null; }
+      if (stageTimer) { clearTimeout(stageTimer); stageTimer = null; }
     };
 
     paint(6);
