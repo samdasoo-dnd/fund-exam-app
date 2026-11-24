@@ -1,0 +1,132 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/fund_deep"
+    android:fitsSystemWindows="false">
+
+    <WebView
+        android:id="@+id/web_view"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@color/fund_deep" />
+
+    <!-- 서버가 깨어나는 동안 보이는 미니멀 다크 로딩 오버레이 -->
+    <FrameLayout
+        android:id="@+id/loading_overlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@color/fund_deep"
+        android:clickable="true"
+        android:focusable="true">
+
+        <!-- 내장 로딩 화면: assets/loading.html (제목 + 슬림 프로그레스 바) -->
+        <WebView
+            android:id="@+id/loading_web_view"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@color/fund_deep" />
+
+        <!-- 로컬 로딩 화면을 그리지 못했을 때만 올라오는 네이티브 대체 화면 -->
+        <LinearLayout
+            android:id="@+id/loading_fallback"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@color/fund_deep"
+            android:gravity="center"
+            android:orientation="vertical"
+            android:paddingLeft="32dp"
+            android:paddingRight="32dp"
+            android:visibility="gone">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="14dp"
+                android:text="📝"
+                android:textSize="52sp" />
+
+            <TextView
+                android:id="@+id/loading_text"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/loading_title"
+                android:textColor="@color/fund_text"
+                android:textSize="19sp"
+                android:textStyle="bold" />
+
+            <ProgressBar
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="22dp"
+                android:indeterminate="true"
+                android:indeterminateTint="@color/fund_teal" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="22dp"
+                android:gravity="center"
+                android:lineSpacingExtra="4dp"
+                android:text="@string/loading_sub"
+                android:textColor="@color/fund_text_dim"
+                android:textSize="12.5sp" />
+        </LinearLayout>
+    </FrameLayout>
+
+    <!-- 연결 실패(오프라인·서버 오류) 시 재시도 화면 -->
+    <LinearLayout
+        android:id="@+id/error_view"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@color/fund_deep"
+        android:clickable="true"
+        android:focusable="true"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:paddingLeft="32dp"
+        android:paddingRight="32dp"
+        android:visibility="gone">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="16dp"
+            android:text="🌐"
+            android:textSize="46sp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/error_title"
+            android:textColor="@color/fund_text"
+            android:textSize="19sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/error_detail"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:gravity="center"
+            android:lineSpacingExtra="4dp"
+            android:text="@string/error_default_detail"
+            android:textColor="@color/fund_text_dim"
+            android:textSize="13sp" />
+
+        <Button
+            android:id="@+id/retry_button"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="28dp"
+            android:backgroundTint="@color/fund_teal"
+            android:minWidth="180dp"
+            android:paddingLeft="28dp"
+            android:paddingRight="28dp"
+            android:text="@string/retry"
+            android:textColor="#04121C"
+            android:textSize="15sp"
+            android:textStyle="bold" />
+    </LinearLayout>
+</FrameLayout>
