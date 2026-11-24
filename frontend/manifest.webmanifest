@@ -1,0 +1,9 @@
+{
+  "name": "펀드 모의고사",
+  "short_name": "펀드모의고사",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#061124",
+  "theme_color": "#061124",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml" }]
+}
