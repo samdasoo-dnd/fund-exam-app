@@ -26,11 +26,13 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
 DATA_DIR = os.path.join(BASE_DIR, "data")
 QUESTIONS_PATH = os.path.join(DATA_DIR, "questions.json")
+GAP_PATH = os.path.join(DATA_DIR, "gap_questions.json")
 PORT = int(os.environ.get("PORT") or 8770)
 SERVER_KEY = (os.environ.get("GEMINI_API_KEY") or "").strip()
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.1.0"
 
 _questions_cache = {"mtime": 0, "data": None, "lock": threading.Lock()}
+_gap_cache = {"mtime": 0, "data": None, "lock": threading.Lock()}
 
 MIME = {
     ".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8",
@@ -73,6 +75,23 @@ def load_questions():
                 _questions_cache["data"] = json.load(f)
             _questions_cache["mtime"] = mtime
         return _questions_cache["data"]
+
+
+def load_gap_questions():
+    """틈새문제 300제 — 모의고사 1~4회와 분리된 문제은행."""
+    with _gap_cache["lock"]:
+        try:
+            mtime = os.path.getmtime(GAP_PATH)
+        except OSError:
+            return []
+        if _gap_cache["data"] is None or mtime != _gap_cache["mtime"]:
+            try:
+                with open(GAP_PATH, encoding="utf-8") as f:
+                    _gap_cache["data"] = json.load(f)
+            except (OSError, ValueError):
+                return []
+            _gap_cache["mtime"] = mtime
+        return _gap_cache["data"]
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -139,6 +158,7 @@ class Handler(BaseHTTPRequestHandler):
                 "hasServerKey": bool(SERVER_KEY),
                 "version": APP_VERSION,
                 "questions": len(load_questions()),
+                "gapQuestions": len(load_gap_questions()),
                 "time": time.strftime("%Y-%m-%dT%H:%M:%S"),
             })
             return
@@ -148,6 +168,13 @@ class Handler(BaseHTTPRequestHandler):
                 self._fail("문제은행을 불러오지 못했습니다.", 500)
                 return
             self._json({"ok": True, "count": len(qs), "questions": qs})
+            return
+        if path == "/api/gap-questions":
+            gq = load_gap_questions()
+            if not gq:
+                self._fail("틈새문제를 불러오지 못했습니다.", 500)
+                return
+            self._json({"ok": True, "count": len(gq), "questions": gq})
             return
         if path == "/api/ai/check":
             key = (self.headers.get("X-Gemini-Key") or "").strip() or SERVER_KEY
@@ -199,7 +226,8 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     qs = load_questions()
-    print(f"📝 펀드 모의고사 서버 v{APP_VERSION} — 문항 {len(qs)}개, 포트 {PORT}, "
+    print(f"📝 펀드 모의고사 서버 v{APP_VERSION} — 모의고사 {len(qs)}문항, "
+          f"틈새문제 {len(load_gap_questions())}문항, 포트 {PORT}, "
           f"서버 키 {'있음' if SERVER_KEY else '없음'}")
     httpd = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     httpd.daemon_threads = True
