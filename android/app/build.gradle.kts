@@ -19,8 +19,8 @@ android {
         applicationId = "com.donsik.fundexam"
         minSdk = 24
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.0.1"
 
         // 다크 네이비 로딩 화면 / 재시도 화면에 쓸 주소를 한 곳에서 관리
         resValue("string", "app_url", "https://fund-exam-app.onrender.com")
