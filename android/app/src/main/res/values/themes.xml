@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.FundExam" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/fund_deep</item>
+        <item name="android:colorBackground">@color/fund_deep</item>
+        <item name="android:statusBarColor">@color/fund_deep</item>
+        <item name="android:navigationBarColor">@color/fund_deep</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:colorAccent">@color/fund_sky</item>
+        <item name="android:textColorPrimary">@color/fund_text</item>
+        <item name="android:textColorSecondary">@color/fund_text_dim</item>
+    </style>
+</resources>

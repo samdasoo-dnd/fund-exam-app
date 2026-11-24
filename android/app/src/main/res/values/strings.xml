@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">펀드 모의고사</string>
+    <string name="loading_title">펀드 모의고사</string>
+    <string name="loading_sub">서버 연결 중…</string>
+    <string name="error_title">연결할 수 없어요</string>
+    <string name="error_default_detail">인터넷 연결을 확인한 뒤 다시 시도해 주세요.</string>
+    <string name="retry">다시 시도</string>
+</resources>
