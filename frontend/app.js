@@ -9,6 +9,7 @@
 
   var KEY = "fundExam.v1";
   var QKEY = "fundExam.questions.v1";
+  var GAPKEY = "fundExam.gap.v1";
   var EXAM_MIN = 120;
   var SUBJECTS = [
     { name: "제1과목 펀드일반", short: "1과목", total: 60, pass: 30 },
@@ -29,15 +30,19 @@
     return {
       attempts: [], wrong: {}, bookmarks: {}, settings: { immediate: false, geminiKey: "", showUnit: true },
       ai: { solved: 0, generated: 0, lastAt: null }, active: null,
+      gap: { ans: {}, pos: {}, last: null, updatedAt: null },
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString()
     };
   }
   function normalize(raw) {
     var d = defaultStore();
     if (!raw || typeof raw !== "object") return d;
-    ["attempts", "wrong", "bookmarks", "settings", "ai", "active"].forEach(function (k) {
+    ["attempts", "wrong", "bookmarks", "settings", "ai", "active", "gap"].forEach(function (k) {
       if (raw[k] != null && typeof raw[k] === typeof d[k]) d[k] = raw[k];
     });
+    d.gap = Object.assign({ ans: {}, pos: {}, last: null, updatedAt: null }, raw.gap || {});
+    if (!d.gap.ans || typeof d.gap.ans !== "object") d.gap.ans = {};
+    if (!d.gap.pos || typeof d.gap.pos !== "object") d.gap.pos = {};
     d.settings = Object.assign(defaultStore().settings, raw.settings || {});
     d.ai = Object.assign(defaultStore().ai, raw.ai || {});
     if (raw.createdAt) d.createdAt = raw.createdAt;
@@ -126,7 +131,16 @@
   function pct(a, b) { return b ? Math.round((a / b) * 100) : 0; }
   function examList() { return [1, 2, 3, 4]; }
   function byExam(n) { return QS.filter(function (q) { return q.exam === n; }); }
-  function qById(id) { return QS.filter(function (q) { return q.id === id; })[0]; }
+  function qById(id) {
+    var q = QS.filter(function (x) { return x.id === id; })[0];
+    return q || GAP.filter(function (x) { return x.id === id; })[0];
+  }
+  function subjectNo(name) {
+    var s = SUBJECTS.filter(function (x) { return x.name === name; })[0];
+    return s ? SUBJECTS.indexOf(s) + 1 : 0;
+  }
+  function isGap(q) { return !!(q && q.gap); }
+  function subjectTail(name) { return String(name || "").replace(/^제\d과목\s*/, "").trim(); }
   function subjectShort(name) {
     var s = SUBJECTS.filter(function (x) { return x.name === name; })[0];
     return s ? s.short : name;
@@ -138,6 +152,7 @@
 
   /* ---------------- 문제은행 ---------------- */
   var QS = [];
+  var GAP = [];
   var SERVER = { hasServerKey: false, checked: false };
 
   function cachedQuestions() {
@@ -163,6 +178,27 @@
       if (!QS.length) {
         app.innerHTML = '<div class="card empty" style="margin-top:26px">문제은행을 불러오지 못했습니다. 네트워크를 확인한 뒤 새로고침해 주세요.</div>';
       }
+    });
+  }
+  function cachedGap() {
+    try {
+      var raw = localStorage.getItem(GAPKEY);
+      if (!raw) return null;
+      var o = JSON.parse(raw);
+      return o && o.length ? o : null;
+    } catch (e) { return null; }
+  }
+  function loadGapQuestions() {
+    var cached = cachedGap();
+    if (cached) { GAP = cached; render(); }
+    return fetch("/api/gap-questions").then(function (r) { return r.json(); }).then(function (d) {
+      if (d && d.ok && d.questions && d.questions.length) {
+        GAP = d.questions;
+        try { localStorage.setItem(GAPKEY, JSON.stringify(GAP)); } catch (e) { }
+        render();
+      }
+    }).catch(function () {
+      if (!GAP.length) server.gapError = true;
     });
   }
   function checkHealth() {
@@ -218,6 +254,20 @@
     return Object.keys(agg).map(function (k) { return agg[k]; })
       .sort(function (a, b) { return b.n - a.n; }).slice(0, limit || 3);
   }
+  function gapHomeSection() {
+    if (!GAP.length) return "";
+    var cards = SUBJECTS.map(function (s) {
+      var st = gapStats(s.name);
+      var p = st.total ? pct(st.done, st.total) : 0;
+      return '<button class="card gapmini" data-gap-open="' + esc(s.name) + '" data-gap-idx="' + gapNextIndex(s.name) + '">' +
+        '<div class="row between"><b>' + s.short + ' 틈새문제</b><span class="pill">' + st.done + '/' + st.total + '</span></div>' +
+        '<div class="bar"><i style="width:' + p + '%"></i></div>' +
+        '<span class="small muted">' + (st.done ? '정답률 ' + st.rate + '% · ' + (st.done < st.total ? '이어 풀기' : '다시 보기') : '가볍게 시작하기') + '</span></button>';
+    }).join("");
+    return '<div class="section-title"><h2>틈새문제</h2><span class="small muted">시험 전 가볍게 · 바로 해설</span></div>' +
+      '<div class="gapminigrid">' + cards + '</div>';
+  }
+
   function renderHome() {
     var solved = D.attempts.length;
     var totalWrong = Object.keys(D.wrong).length;
@@ -251,15 +301,16 @@
     app.innerHTML = '' +
       '<section class="hero">' +
       '<h1>펀드투자권유자문인력 <span style="color:var(--accent)">실전 4회분</span></h1>' +
-      '<p>기출 2회분 200문항 + AI 신규 2회분 200문항 · 문항을 고르면 바로 시작합니다.</p>' +
+      '<p>기출 2회분 200 + AI 신규 200 + 틈새문제 300문항 · 문항을 고르면 바로 시작합니다.</p>' +
       '<div class="statgrid">' +
-      '<div class="stat"><b>' + (QS.length || 400) + '</b><span>총 문항</span></div>' +
+      '<div class="stat"><b>' + ((QS.length || 400) + (GAP.length || 0)) + '</b><span>총 문항</span></div>' +
       '<div class="stat"><b>' + (solved || 0) + '</b><span>응시 기록</span></div>' +
       '<div class="stat"><b>' + (solved ? avg + '점' : '-') + '</b><span>평균 점수</span></div>' +
       '</div></section>' +
       '<div class="section-title"><h2>실전 모의고사</h2><span class="small muted">과목별 50% · 총 70점 이상 합격</span></div>' +
       '<div class="examgrid">' + cards + '</div>' +
-      '<div class="section-title"><h2>약점 공략</h2><span class="small muted">틀린 문항이 많은 영역</span></div>' +
+      gapHomeSection() +
+      '<div class="section-title"><h2>약점 공략</h2><span class="small muted">틀린 문항이 많은 영역 · 틈새문제 포함</span></div>' +
       '<div class="weaklist">' + weakHtml + '</div>' +
       '<div class="section-title"><h2>바로가기</h2></div>' +
       '<div class="quickgrid">' +
@@ -273,6 +324,9 @@
     });
     app.querySelectorAll("[data-go]").forEach(function (b) {
       b.addEventListener("click", function () { setView(b.dataset.go); });
+    });
+    app.querySelectorAll("[data-gap-open]").forEach(function (b) {
+      b.addEventListener("click", function () { gapOpen(b.dataset.gapOpen, parseInt(b.dataset.gapIdx, 10)); });
     });
     app.querySelectorAll("[data-weak]").forEach(function (b) {
       b.addEventListener("click", function () {
@@ -486,7 +540,7 @@
       var p = r.subjects[s.name];
       var failed = p.correct < s.pass;
       return '<div class="subjectrow' + (failed ? " fail" : "") + '">' +
-        '<div class="t"><span>' + s.short + ' <span class="tiny muted">' + s.name.replace(s.short, "").trim() + '</span></span>' +
+        '<div class="t"><span>' + s.short + ' <span class="tiny muted">' + subjectTail(s.name) + '</span></span>' +
         '<span>' + p.correct + '/' + p.total + ' ' + (failed ? '<span class="pill bad">과락</span>' : '<span class="pill ok">통과</span>') + '</span></div>' +
         '<div class="bar"><i style="width:' + pct(p.correct, p.total) + '%"></i></div>' +
         '<div class="tiny muted">과락 기준 ' + s.pass + '문항 · 획득 ' + pct(p.correct, p.total) + '%</div></div>';
@@ -570,7 +624,7 @@
     if (ui.filterSubject !== "all") items = items.filter(function (q) { return q.subject === ui.filterSubject; });
     if (ui.filterUnit !== "all") items = items.filter(function (q) { return q.unit === ui.filterUnit; });
     if (ui.booksOnly) items = items.filter(function (q) { return !!D.wrong[q.id]; });
-    items.sort(function (a, b) { return (b.exam - a.exam) || (b.no - a.no); });
+    items.sort(function (a, b) { return ((b.exam || 0) - (a.exam || 0)) || ((b.no || 0) - (a.no || 0)); });
     return items;
   }
   function renderWrong() {
@@ -590,7 +644,7 @@
       }).join("");
       return '<div class="card wrongitem" data-qid="' + q.id + '">' +
         '<div class="row between wrapflex" style="margin-bottom:8px">' +
-        '<div class="row"><span class="pill">' + q.id + '</span><span class="pill">' + esc(unitLabel(q)) + '</span>' +
+        '<div class="row"><span class="pill">' + (isGap(q) ? '틈새 · ' + subjectShort(q.subject) : q.id) + '</span><span class="pill">' + esc(unitLabel(q)) + '</span>' +
         (D.bookmarks[q.id] ? '<span class="pill warn">북마크</span>' : '') +
         (mine ? '<span class="pill bad">' + (mine.count || 1) + '회 오답</span>' : '') + '</div>' +
         '<div class="row"><button class="btn small ghost" data-bm="' + q.id + '">' + (D.bookmarks[q.id] ? '★' : '☆') + '</button></div>' +
@@ -640,6 +694,7 @@
     if (ui.ai) renderAiZone();
   }
   function lastAnswerOf(id) {
+    if (D.gap.ans[id]) return D.gap.ans[id];
     for (var i = D.attempts.length - 1; i >= 0; i--) {
       if (D.attempts[i].answers && D.attempts[i].answers[id]) return D.attempts[i].answers[id];
     }
@@ -739,6 +794,231 @@
     if (more) more.addEventListener("click", function () { generateMore(); });
   }
 
+
+  /* ---------------- 틈새문제 (과목별 100제 · 즉시 해설) ---------------- */
+  var gapUi = { subject: null, idx: 0, showJump: false, peek: {} };
+
+  function gapList(subject) { return GAP.filter(function (q) { return q.subject === subject; }); }
+  function gapStats(subject) {
+    var qs = gapList(subject), done = 0, right = 0;
+    qs.forEach(function (q) {
+      var p = D.gap.ans[q.id];
+      if (p) { done++; if (p === q.answer) right++; }
+    });
+    return { total: qs.length, done: done, right: right, wrong: done - right, rate: done ? Math.round((right / done) * 100) : 0 };
+  }
+  function gapNextIndex(subject) {
+    var qs = gapList(subject);
+    for (var i = 0; i < qs.length; i++) { if (!D.gap.ans[qs[i].id]) return i; }
+    return 0;
+  }
+  function gapOpen(subject, idx) {
+    gapUi.subject = subject;
+    gapUi.showJump = false;
+    var qs = gapList(subject);
+    var saved = D.gap.pos[String(subjectNo(subject))];
+    gapUi.idx = typeof idx === "number" ? idx : (typeof saved === "number" && saved < qs.length ? saved : 0);
+    D.gap.last = subject;
+    D.gap.updatedAt = new Date().toISOString();
+    save();
+    setView("gap");
+  }
+  function gapGo(delta) {
+    var qs = gapList(gapUi.subject);
+    var next = gapUi.idx + delta;
+    if (next < 0 || next >= qs.length) return;
+    gapUi.idx = next;
+    D.gap.pos[String(subjectNo(gapUi.subject))] = next;
+    D.gap.updatedAt = new Date().toISOString();
+    save();
+    renderGap();
+  }
+  function gapPick(n) {
+    var qs = gapList(gapUi.subject);
+    var q = qs[gapUi.idx];
+    if (!q) return;
+    if (D.gap.ans[q.id] === n) return;
+    D.gap.ans[q.id] = n;
+    if (n !== q.answer) {
+      D.wrong[q.id] = { at: new Date().toISOString(), count: ((D.wrong[q.id] || {}).count || 0) + 1, gap: true };
+    } else if (D.wrong[q.id]) {
+      delete D.wrong[q.id];
+    }
+    D.gap.pos[String(subjectNo(gapUi.subject))] = gapUi.idx;
+    D.gap.updatedAt = new Date().toISOString();
+    save();
+    renderGap();
+  }
+  function gapReset() {
+    var subj = gapUi.subject;
+    if (!subj) return;
+    var st = gapStats(subj);
+    if (!confirm(subj + " 틈새문제 풀이 기록(" + st.done + "문항)을 초기화할까요? 오답노트의 틈새문제 기록도 함께 지워집니다.")) return;
+    gapList(subj).forEach(function (q) {
+      delete D.gap.ans[q.id];
+      if (D.wrong[q.id]) delete D.wrong[q.id];
+    });
+    delete D.gap.pos[String(subjectNo(subj))];
+    D.gap.updatedAt = new Date().toISOString();
+    save();
+    gapUi.idx = 0;
+    toast("틈새문제 기록을 초기화했습니다.");
+    renderGap();
+  }
+
+  function renderGapHome() {
+    if (!GAP.length) {
+      app.innerHTML = '<div class="card empty" style="margin-top:26px">' + (SERVER.gapError ? "틈새문제를 불러오지 못했습니다. 새로고침해 주세요." : '<span class="spinner"></span> 틈새문제 300제를 불러오는 중…') + '</div>';
+      return;
+    }
+    var cards = SUBJECTS.map(function (s) {
+      var st = gapStats(s.name);
+      var p = st.total ? pct(st.done, st.total) : 0;
+      return '<div class="card examcard gapcard">' +
+        '<div class="row between"><h3>' + s.name + '</h3><span class="pill">' + st.total + '문제</span></div>' +
+        '<div class="gapprog"><div class="bar"><i style="width:' + p + '%"></i></div>' +
+        '<div class="row between"><span class="small">' + st.done + ' / ' + st.total + '</span>' +
+        '<span class="small ' + (st.done >= 60 ? "ok" : "muted") + '">' + (st.done ? "정답률 " + st.rate + "%" : "아직 시작 전") + '</span></div></div>' +
+        '<div class="row" style="gap:8px">' +
+        '<button class="btn primary grow" data-gap-open="' + esc(s.name) + '" data-gap-idx="' + gapNextIndex(s.name) + '">' + (st.done ? "이어 풀기" : "시작하기") + '</button>' +
+        '<button class="btn small" data-gap-open="' + esc(s.name) + '" data-gap-idx="0">처음부터</button>' +
+        '</div></div>';
+    }).join("");
+
+    var total = gapStatsAll();
+    app.innerHTML = '' +
+      '<div class="section-title"><h2>틈새문제</h2><span class="small muted">시험 전 가볍게 · 문제마다 바로 해설</span></div>' +
+      '<div class="card" style="padding:16px;margin-bottom:14px">' +
+      '<div class="row between wrapflex"><div><b>1·2·3과목 기출 변형 300제</b>' +
+      '<div class="small muted">120분 타이머 없이 한 문제씩. 틀린 문제는 오답노트와 AI 약점 공략에 그대로 쌓입니다.</div></div>' +
+      '<div class="row" style="gap:12px"><div class="stat" style="padding:10px 14px"><b>' + total.done + '</b><span>/ ' + total.total + ' 풀이</span></div>' +
+      '<div class="stat" style="padding:10px 14px"><b>' + (total.done ? total.rate + "%" : "-") + '</b><span>정답률</span></div></div></div></div>' +
+      '<div class="examgrid">' + cards + '</div>' +
+      '<div class="section-title"><h2>이어서 볼까요</h2></div>' +
+      '<div class="quickgrid">' +
+      (D.gap.last ? '<button class="card quick" data-gap-last="1"><span class="ic">⏳</span><span><b>마지막으로 본 과목</b><span>' + esc(D.gap.last) + ' · 이어 풀기</span></span></button>' : '') +
+      '<button class="card quick" data-go="wrong"><span class="ic">📕</span><span><b>오답노트</b><span>틈새문제 포함 ' + Object.keys(D.wrong).length + '개</span></span></button>' +
+      '<button class="card quick" data-go="home"><span class="ic">📝</span><span><b>실전 모의고사</b><span>1~4회 400문항 · 120분</span></span></button>' +
+      '</div>';
+
+    app.querySelectorAll("[data-gap-open]").forEach(function (b) {
+      b.addEventListener("click", function () { gapOpen(b.dataset.gapOpen, parseInt(b.dataset.gapIdx, 10)); });
+    });
+    app.querySelectorAll("[data-go]").forEach(function (b) {
+      b.addEventListener("click", function () { setView(b.dataset.go); });
+    });
+    var last = app.querySelector("[data-gap-last]");
+    if (last) last.addEventListener("click", function () { gapOpen(D.gap.last, gapNextIndex(D.gap.last)); });
+  }
+
+  function gapStatsAll() {
+    var done = 0, right = 0, total = 0;
+    SUBJECTS.forEach(function (s) {
+      var st = gapStats(s.name);
+      done += st.done; right += st.right; total += st.total;
+    });
+    return { total: total || 300, done: done, right: right, rate: done ? Math.round((right / done) * 100) : 0 };
+  }
+
+  function renderGap() {
+    if (!GAP.length) { renderGapHome(); return; }
+    if (!gapUi.subject) { renderGapHome(); return; }
+    var qs = gapList(gapUi.subject);
+    if (!qs.length) { renderGapHome(); return; }
+    if (gapUi.idx >= qs.length) gapUi.idx = qs.length - 1;
+    var q = qs[gapUi.idx];
+    var picked = D.gap.ans[q.id];
+    var peeked = !!gapUi.peek[q.id] && !picked;
+    var revealed = !!picked || peeked;
+    var st = gapStats(gapUi.subject);
+
+    var opts = q.options.map(function (o, i) {
+      var n = i + 1, cls = "opt";
+      if (revealed) {
+        if (n === q.answer) cls += " correct";
+        else if (n === picked) cls += " wrong";
+      }
+      return '<button class="' + cls + '" data-gopt="' + n + '"><span class="num">' + n + '</span><span>' + safeHtml(o) + '</span></button>';
+    }).join("");
+
+    var cells = qs.map(function (x, i) {
+      var p = D.gap.ans[x.id], cls = "cell";
+      if (p) cls += (p === x.answer ? " right" : " wrong");
+      if (i === gapUi.idx) cls += " current";
+      return '<button class="' + cls + '" data-gjump="' + i + '">' + (i + 1) + '</button>';
+    }).join("");
+
+    var explain = revealed
+      ? '<div class="explain"><span class="tag">정답 ' + q.answer + '번 · ' + esc(unitLabel(q)) + '</span>' +
+        '<div>' + safeHtml(q.explanation) + '</div>' +
+        (picked
+          ? (picked !== q.answer
+            ? '<div class="small" style="margin-top:8px;color:var(--bad)">내 답 ' + picked + '번 — 오답노트에 담았습니다.</div>'
+            : '<div class="small" style="margin-top:8px;color:var(--ok)">정답입니다.</div>')
+          : '<div class="small" style="margin-top:8px;color:var(--ink-mute)">정답만 확인했습니다. 직접 풀려면 선지를 고르세요 — 고르면 채점되고 오답노트에 반영됩니다.</div>') +
+        '</div>'
+      : '<div class="gap-hint small muted">답을 고르면 정답과 해설이 바로 나옵니다. 틀려도 부담 없이 넘어가세요.</div>';
+
+    var peekBtn = picked
+      ? ''
+      : '<button class="btn small' + (peeked ? ' ghost' : '') + '" id="gapPeek">' +
+        (peeked ? '정답 접기' : '정답 바로 보기') + '</button>';
+
+    app.innerHTML = '' +
+      '<div class="exam-top">' +
+      '<div class="row wrapflex"><button class="btn small" id="gapBack">← 과목 선택</button>' +
+      '<span class="pill">' + esc(subjectShort(gapUi.subject)) + '</span>' +
+      '<span class="small muted" id="gapProg">' + st.done + '/' + st.total + ' 풀이 · 정답률 ' + (st.done ? st.rate + '%' : '-') + '</span></div>' +
+      '<div class="row"><button class="btn small" id="gapJumpBtn">번호 점프</button>' +
+      '<button class="btn small ghost" id="gapResetBtn" style="color:var(--bad)">기록 초기화</button></div>' +
+      '</div>' +
+      '<div class="gaplayout">' +
+      '<div class="card qcard">' +
+      '<div class="qhead"><div class="qno"><span class="badge">' + (gapUi.idx + 1) + '</span>' +
+      '<span class="small dim">' + esc(unitLabel(q)) + '</span>' +
+      '<span class="pill">틈새</span><span class="tiny muted">' + (st.done ? '정답률 ' + st.rate + '%' : '') + '</span></div>' +
+      (D.bookmarks[q.id] ? '<span class="pill warn">북마크</span>' : '') + '</div>' +
+      '<div class="stem">' + safeHtml(q.stem) + '</div>' +
+      '<div class="options">' + opts + '</div>' +
+      explain +
+      '<div class="qfoot"><div class="navbtns">' +
+      '<button class="btn small" id="gapPrev"' + (gapUi.idx === 0 ? " disabled" : "") + '>← 이전</button>' +
+      '<button class="btn small" id="gapNext"' + (gapUi.idx === qs.length - 1 ? " disabled" : "") + '>다음 →</button>' +
+      peekBtn +
+      '</div><span class="tiny muted">' + (gapUi.idx + 1) + ' / ' + qs.length + '</span></div>' +
+      '</div>' +
+      '<aside class="card omr gapjump' + (gapUi.showJump ? " open" : "") + '" id="gapJumpPanel"><div class="omr-drag"></div><h4>번호 점프</h4>' +
+      '<div class="grid">' + cells + '</div>' +
+      '<div class="stats"><span>풀이 <b>' + st.done + '</b></span><span>정답 <b>' + st.right + '</b></span><span>오답 <b>' + st.wrong + '</b></span></div></aside>' +
+      '</div>';
+
+    app.querySelectorAll("[data-gopt]").forEach(function (b) {
+      b.addEventListener("click", function () { gapPick(parseInt(b.dataset.gopt, 10)); });
+    });
+    app.querySelectorAll("[data-gjump]").forEach(function (b) {
+      b.addEventListener("click", function () {
+        gapUi.idx = parseInt(b.dataset.gjump, 10);
+        D.gap.pos[String(subjectNo(gapUi.subject))] = gapUi.idx;
+        gapUi.showJump = false;
+        save(); renderGap();
+      });
+    });
+    $("#gapBack").addEventListener("click", function () { gapUi.subject = null; renderGapHome(); });
+    var peekEl = $("#gapPeek");
+    if (peekEl) peekEl.addEventListener("click", function () {
+      var qq = qs[gapUi.idx];
+      if (gapUi.peek[qq.id]) delete gapUi.peek[qq.id]; else gapUi.peek[qq.id] = true;
+      renderGap();
+    });
+    $("#gapPrev").addEventListener("click", function () { gapGo(-1); });
+    $("#gapNext").addEventListener("click", function () { gapGo(1); });
+    $("#gapJumpBtn").addEventListener("click", function () {
+      gapUi.showJump = !gapUi.showJump;
+      var p = $("#gapJumpPanel"); if (p) p.classList.toggle("open", gapUi.showJump);
+    });
+    $("#gapResetBtn").addEventListener("click", gapReset);
+  }
+
   /* ---------------- 설정 ---------------- */
   function renderSettings() {
     app.innerHTML = '' +
@@ -761,14 +1041,15 @@
       '</div>' +
       '<div class="section-title"><h2>학습 기록</h2></div>' +
       '<div class="card" style="padding:18px">' +
-      '<div class="small dim">응시 ' + D.attempts.length + '회 · 오답 ' + Object.keys(D.wrong).length + '문항 · 북마크 ' + Object.keys(D.bookmarks).length + '문항 · AI 문제 ' + (D.ai.solved || 0) + '개 풀이</div>' +
+      '<div class="small dim">응시 ' + D.attempts.length + '회 · 오답 ' + Object.keys(D.wrong).length + '문항 · 북마크 ' + Object.keys(D.bookmarks).length + '문항 · AI 문제 ' + (D.ai.solved || 0) + '개 풀이 · 틈새문제 ' + gapStatsAll().done + '/' + gapStatsAll().total + ' 풀이</div>' +
       '<p class="tiny muted" style="margin:8px 0 12px">기록은 이 브라우저(fundExam.v1)에만 저장됩니다. 서버로 전송되지 않습니다.</p>' +
       '<div class="row wrapflex" style="gap:8px"><button class="btn small" id="exportBtn">기록 내보내기</button>' +
       '<button class="btn small" id="importBtn">가져오기</button>' +
+      '<button class="btn small ghost" id="gapResetAll" style="color:var(--bad)">틈새문제만 초기화</button>' +
       '<button class="btn small ghost" id="resetBtn" style="color:var(--bad)">기록 초기화</button></div>' +
       '<input type="file" id="importFile" accept="application/json" class="hide" />' +
       '</div>' +
-      '<p class="tiny muted" style="margin-top:18px;text-align:center">펀드 모의고사 v1.0 · 문항 ' + (QS.length || 400) + '개 · 펀드투자권유자문인력 100문항/120분 기준</p>';
+      '<p class="tiny muted" style="margin-top:18px;text-align:center">펀드 모의고사 v1.1 · 모의고사 ' + (QS.length || 400) + '문항 + 틈새문제 ' + (GAP.length || 300) + '문항 · 펀드투자권유자문인력 100문항/120분 기준</p>';
 
     $("#immediate").addEventListener("change", function (e) { D.settings.immediate = e.target.checked; save(); toast("즉시 채점 " + (e.target.checked ? "켜짐" : "꺼짐")); });
     $("#showUnit").addEventListener("change", function (e) { D.settings.showUnit = e.target.checked; save(); });
@@ -805,6 +1086,13 @@
       };
       reader.readAsText(f);
     });
+    $("#gapResetAll").addEventListener("click", function () {
+      var st = gapStatsAll();
+      if (!confirm("틈새문제 풀이 기록(" + st.done + "문항)을 초기화할까요? 오답노트의 틈새문제 기록도 함께 지워집니다.")) return;
+      GAP.forEach(function (q) { delete D.gap.ans[q.id]; if (D.wrong[q.id]) delete D.wrong[q.id]; });
+      D.gap.pos = {}; D.gap.updatedAt = new Date().toISOString();
+      save(); toast("틈새문제 기록을 초기화했습니다."); setView("settings");
+    });
     $("#resetBtn").addEventListener("click", function () {
       if (!confirm("응시 기록·오답노트·북마크를 모두 지울까요? 되돌릴 수 없습니다.")) return;
       D = defaultStore(); save(); toast("기록을 초기화했습니다."); setView("home");
@@ -818,6 +1106,7 @@
     if (view === "result") { renderResult(); return; }
     if (view === "review") { renderReview(); return; }
     if (view === "wrong") { renderWrong(); return; }
+    if (view === "gap") { renderGap(); return; }
     if (view === "settings") { renderSettings(); return; }
     renderHome();
   }
@@ -836,5 +1125,6 @@
       if (D.active && resumeExam()) return;
       render();
     });
+    loadGapQuestions();
   });
 })();
