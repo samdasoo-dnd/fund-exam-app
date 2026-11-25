@@ -1114,7 +1114,7 @@
       '<button class="btn small ghost" id="resetBtn" style="color:var(--bad)">기록 초기화</button></div>' +
       '<input type="file" id="importFile" accept="application/json" class="hide" />' +
       '</div>' +
-      '<p class="tiny muted" style="margin-top:18px;text-align:center">펀드 모의고사 v1.1.2 · 모의고사 ' + (QS.length || 400) + '문항 + 틈새문제 ' + (GAP.length || 300) + '문항 · 펀드투자권유자문인력 100문항/120분 기준</p>';
+      '<p class="tiny muted" style="margin-top:18px;text-align:center">펀드 모의고사 v1.1.3 · 모의고사 ' + (QS.length || 400) + '문항 + 틈새문제 ' + (GAP.length || 300) + '문항 · 펀드투자권유자문인력 100문항/120분 기준</p>';
 
     $("#immediate").addEventListener("change", function (e) { D.settings.immediate = e.target.checked; save(); toast("즉시 채점 " + (e.target.checked ? "켜짐" : "꺼짐")); });
     $("#showUnit").addEventListener("change", function (e) { D.settings.showUnit = e.target.checked; save(); });
