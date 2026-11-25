@@ -29,7 +29,7 @@ QUESTIONS_PATH = os.path.join(DATA_DIR, "questions.json")
 GAP_PATH = os.path.join(DATA_DIR, "gap_questions.json")
 PORT = int(os.environ.get("PORT") or 8770)
 SERVER_KEY = (os.environ.get("GEMINI_API_KEY") or "").strip()
-APP_VERSION = "1.1.2"
+APP_VERSION = "1.1.3"
 
 _questions_cache = {"mtime": 0, "data": None, "lock": threading.Lock()}
 _gap_cache = {"mtime": 0, "data": None, "lock": threading.Lock()}
