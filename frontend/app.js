@@ -796,7 +796,7 @@
 
 
   /* ---------------- 틈새문제 (과목별 100제 · 즉시 해설) ---------------- */
-  var gapUi = { subject: null, idx: 0, showJump: false, peek: {} };
+  var gapUi = { subject: null, idx: 0, showJump: false };
 
   function gapList(subject) { return GAP.filter(function (q) { return q.subject === subject; }); }
   function gapStats(subject) {
@@ -928,8 +928,7 @@
     if (gapUi.idx >= qs.length) gapUi.idx = qs.length - 1;
     var q = qs[gapUi.idx];
     var picked = D.gap.ans[q.id];
-    var peeked = !!gapUi.peek[q.id] && !picked;
-    var revealed = !!picked || peeked;
+    var revealed = !!picked;
     var st = gapStats(gapUi.subject);
 
     var opts = q.options.map(function (o, i) {
@@ -948,21 +947,14 @@
       return '<button class="' + cls + '" data-gjump="' + i + '">' + (i + 1) + '</button>';
     }).join("");
 
-    var explain = revealed
+    var explain = picked
       ? '<div class="explain"><span class="tag">정답 ' + q.answer + '번 · ' + esc(unitLabel(q)) + '</span>' +
         '<div>' + safeHtml(q.explanation) + '</div>' +
-        (picked
-          ? (picked !== q.answer
-            ? '<div class="small" style="margin-top:8px;color:var(--bad)">내 답 ' + picked + '번 — 오답노트에 담았습니다.</div>'
-            : '<div class="small" style="margin-top:8px;color:var(--ok)">정답입니다.</div>')
-          : '<div class="small" style="margin-top:8px;color:var(--ink-mute)">정답만 확인했습니다. 직접 풀려면 선지를 고르세요 — 고르면 채점되고 오답노트에 반영됩니다.</div>') +
+        (picked !== q.answer
+          ? '<div class="small" style="margin-top:8px;color:var(--bad)">내 답 ' + picked + '번 — 오답노트에 담았습니다.</div>'
+          : '<div class="small" style="margin-top:8px;color:var(--ok)">정답입니다.</div>') +
         '</div>'
-      : '<div class="gap-hint small muted">답을 고르면 정답과 해설이 바로 나옵니다. 틀려도 부담 없이 넘어가세요.</div>';
-
-    var peekBtn = picked
-      ? ''
-      : '<button class="btn small' + (peeked ? ' ghost' : '') + '" id="gapPeek">' +
-        (peeked ? '정답 접기' : '정답 바로 보기') + '</button>';
+      : '<div class="gap-hint small muted">선지를 고르면 정답과 해설이 바로 나옵니다. 틀려도 부담 없이 넘어가세요.</div>';
 
     app.innerHTML = '' +
       '<div class="exam-top">' +
@@ -984,7 +976,6 @@
       '<div class="qfoot"><div class="navbtns">' +
       '<button class="btn small" id="gapPrev"' + (gapUi.idx === 0 ? " disabled" : "") + '>← 이전</button>' +
       '<button class="btn small" id="gapNext"' + (gapUi.idx === qs.length - 1 ? " disabled" : "") + '>다음 →</button>' +
-      peekBtn +
       '</div><span class="tiny muted">' + (gapUi.idx + 1) + ' / ' + qs.length + '</span></div>' +
       '</div>' +
       '<aside class="card omr gapjump' + (gapUi.showJump ? " open" : "") + '" id="gapJumpPanel"><div class="omr-drag"></div><h4>번호 점프</h4>' +
@@ -1004,12 +995,6 @@
       });
     });
     $("#gapBack").addEventListener("click", function () { gapUi.subject = null; renderGapHome(); });
-    var peekEl = $("#gapPeek");
-    if (peekEl) peekEl.addEventListener("click", function () {
-      var qq = qs[gapUi.idx];
-      if (gapUi.peek[qq.id]) delete gapUi.peek[qq.id]; else gapUi.peek[qq.id] = true;
-      renderGap();
-    });
     $("#gapPrev").addEventListener("click", function () { gapGo(-1); });
     $("#gapNext").addEventListener("click", function () { gapGo(1); });
     $("#gapJumpBtn").addEventListener("click", function () {
