@@ -30,7 +30,7 @@
     return {
       attempts: [], wrong: {}, bookmarks: {}, settings: { immediate: false, geminiKey: "", showUnit: true },
       ai: { solved: 0, generated: 0, lastAt: null }, active: null,
-      gap: { ans: {}, pos: {}, last: null, updatedAt: null },
+      gap: { ans: {}, pos: {}, order: {}, last: null, updatedAt: null },
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString()
     };
   }
@@ -40,9 +40,14 @@
     ["attempts", "wrong", "bookmarks", "settings", "ai", "active", "gap"].forEach(function (k) {
       if (raw[k] != null && typeof raw[k] === typeof d[k]) d[k] = raw[k];
     });
-    d.gap = Object.assign({ ans: {}, pos: {}, last: null, updatedAt: null }, raw.gap || {});
+    d.gap = Object.assign({ ans: {}, pos: {}, order: {}, last: null, updatedAt: null }, raw.gap || {});
     if (!d.gap.ans || typeof d.gap.ans !== "object") d.gap.ans = {};
     if (!d.gap.pos || typeof d.gap.pos !== "object") d.gap.pos = {};
+    // 무작위 순서(신규 필드) — 구버전 저장값에는 없으므로 빈 객체로 보완
+    if (!d.gap.order || typeof d.gap.order !== "object") d.gap.order = {};
+    Object.keys(d.gap.order).forEach(function (k) {
+      if (!Array.isArray(d.gap.order[k])) delete d.gap.order[k];
+    });
     d.settings = Object.assign(defaultStore().settings, raw.settings || {});
     d.ai = Object.assign(defaultStore().ai, raw.ai || {});
     if (raw.createdAt) d.createdAt = raw.createdAt;
@@ -260,7 +265,9 @@
       var st = gapStats(s.name);
       var p = st.total ? pct(st.done, st.total) : 0;
       return '<button class="card gapmini" data-gap-open="' + esc(s.name) + '" data-gap-idx="' + gapNextIndex(s.name) + '">' +
-        '<div class="row between"><b>' + s.short + ' 틈새문제</b><span class="pill">' + st.done + '/' + st.total + '</span></div>' +
+        '<div class="row between"><b>' + s.short + ' 틈새문제</b><span class="row" style="gap:5px">' +
+        (gapIsShuffled(s.name) ? '<span class="pill warn">🔀 무작위</span>' : '') +
+        '<span class="pill">' + st.done + '/' + st.total + '</span></span></div>' +
         '<div class="bar"><i style="width:' + p + '%"></i></div>' +
         '<span class="small muted">' + (st.done ? '정답률 ' + st.rate + '% · ' + (st.done < st.total ? '이어 풀기' : '다시 보기') : '가볍게 시작하기') + '</span></button>';
     }).join("");
@@ -798,7 +805,71 @@
   /* ---------------- 틈새문제 (과목별 100제 · 즉시 해설) ---------------- */
   var gapUi = { subject: null, idx: 0, showJump: false };
 
-  function gapList(subject) { return GAP.filter(function (q) { return q.subject === subject; }); }
+  function gapBaseList(subject) { return GAP.filter(function (q) { return q.subject === subject; }); }
+  function gapOrderKey(subject) { return String(subjectNo(subject)); }
+  function gapIsShuffled(subject) {
+    var arr = D.gap.order && D.gap.order[gapOrderKey(subject)];
+    return !!(arr && arr.length);
+  }
+  function gapIndexById(subject, id) {
+    var qs = gapList(subject);
+    for (var i = 0; i < qs.length; i++) { if (qs[i].id === id) return i; }
+    return -1;
+  }
+  /* D.gap.order[과목]에 저장된 ID 순서로 반환. 저장된 순서에 없는 문항은 뒤에 보충. */
+  function gapList(subject) {
+    var base = gapBaseList(subject);
+    var arr = D.gap.order && D.gap.order[gapOrderKey(subject)];
+    if (!arr || !arr.length) return base;
+    var byId = {}, used = {}, out = [];
+    base.forEach(function (q) { byId[q.id] = q; });
+    arr.forEach(function (id) {
+      var q = byId[id];
+      if (q && !used[id]) { used[id] = 1; out.push(q); }
+    });
+    base.forEach(function (q) { if (!used[q.id]) out.push(q); });
+    return out;
+  }
+  /* 과목 전체 순서를 무작위로 섞거나(켜기) 원래 단원 순서로 복귀(끄기).
+     D.gap.ans·D.wrong(문제 ID 키)는 건드리지 않는다 — 풀이 기록 무손실. */
+  function gapShuffle(subject) {
+    var subj = subject || gapUi.subject;
+    if (!subj) return;
+    var k = gapOrderKey(subj);
+    if (!D.gap.order || typeof D.gap.order !== "object") D.gap.order = {};
+    var onView = gapUi.subject === subj;
+    var holdId = null;
+    if (onView) {
+      var cur = gapList(subj)[gapUi.idx];
+      if (cur) holdId = cur.id;
+    } else {
+      var sp = D.gap.pos[k], sq = gapList(subj);
+      if (typeof sp === "number" && sq[sp]) holdId = sq[sp].id;
+    }
+    var turningOn = !gapIsShuffled(subj);
+    if (turningOn) {
+      var ids = gapBaseList(subj).map(function (q) { return q.id; });
+      for (var i = ids.length - 1; i > 0; i--) {           // Fisher-Yates
+        var j = Math.floor(Math.random() * (i + 1));
+        var t = ids[i]; ids[i] = ids[j]; ids[j] = t;
+      }
+      D.gap.order[k] = ids;
+    } else {
+      delete D.gap.order[k];
+    }
+    var target = turningOn
+      ? gapNextIndex(subj)                                  // 아직 안 푼 첫 문제
+      : (holdId ? gapIndexById(subj, holdId) : -1);        // 보던 문제의 원래 인덱스
+    if (target < 0) target = gapNextIndex(subj);
+    D.gap.pos[k] = target;
+    if (onView) gapUi.idx = target;
+    D.gap.updatedAt = new Date().toISOString();
+    save();
+    toast(turningOn
+      ? "무작위 순서로 섞었습니다. 기존 풀이 기록은 그대로 유지됩니다."
+      : "원래 단원 순서로 돌아왔습니다.");
+    if (onView) renderGap(); else renderGapHome();
+  }
   function gapStats(subject) {
     var qs = gapList(subject), done = 0, right = 0;
     qs.forEach(function (q) {
@@ -875,7 +946,9 @@
       var st = gapStats(s.name);
       var p = st.total ? pct(st.done, st.total) : 0;
       return '<div class="card examcard gapcard">' +
-        '<div class="row between"><h3>' + s.name + '</h3><span class="pill">' + st.total + '문제</span></div>' +
+        '<div class="row between"><h3>' + s.name + '</h3><div class="row" style="gap:6px">' +
+        (gapIsShuffled(s.name) ? '<button class="pill warn gapshuf" data-gap-shuffle="' + esc(s.name) + '" title="누르면 원래 단원 순서로 돌아갑니다">🔀 무작위 ON</button>' : '') +
+        '<span class="pill">' + st.total + '문제</span></div></div>' +
         '<div class="gapprog"><div class="bar"><i style="width:' + p + '%"></i></div>' +
         '<div class="row between"><span class="small">' + st.done + ' / ' + st.total + '</span>' +
         '<span class="small ' + (st.done >= 60 ? "ok" : "muted") + '">' + (st.done ? "정답률 " + st.rate + "%" : "아직 시작 전") + '</span></div></div>' +
@@ -904,6 +977,9 @@
     app.querySelectorAll("[data-gap-open]").forEach(function (b) {
       b.addEventListener("click", function () { gapOpen(b.dataset.gapOpen, parseInt(b.dataset.gapIdx, 10)); });
     });
+    app.querySelectorAll("[data-gap-shuffle]").forEach(function (b) {
+      b.addEventListener("click", function () { gapShuffle(b.dataset.gapShuffle); });
+    });
     app.querySelectorAll("[data-go]").forEach(function (b) {
       b.addEventListener("click", function () { setView(b.dataset.go); });
     });
@@ -926,6 +1002,7 @@
     var qs = gapList(gapUi.subject);
     if (!qs.length) { renderGapHome(); return; }
     if (gapUi.idx >= qs.length) gapUi.idx = qs.length - 1;
+    var shuffled = gapIsShuffled(gapUi.subject);
     var q = qs[gapUi.idx];
     var picked = D.gap.ans[q.id];
     var revealed = !!picked;
@@ -961,7 +1038,9 @@
       '<div class="row wrapflex"><button class="btn small" id="gapBack">← 과목 선택</button>' +
       '<span class="pill">' + esc(subjectShort(gapUi.subject)) + '</span>' +
       '<span class="small muted" id="gapProg">' + st.done + '/' + st.total + ' 풀이 · 정답률 ' + (st.done ? st.rate + '%' : '-') + '</span></div>' +
-      '<div class="row"><button class="btn small" id="gapJumpBtn">번호 점프</button>' +
+      '<div class="row gapbtns">' +
+      '<button class="btn small' + (shuffled ? ' primary' : '') + '" id="gapShuffleBtn" aria-pressed="' + (shuffled ? 'true' : 'false') + '" title="누를 때마다 무작위 순서 ↔ 원래 단원 순서">🔀 무작위' + (shuffled ? ' ON' : '') + '</button>' +
+      '<button class="btn small" id="gapJumpBtn">번호 점프</button>' +
       '<button class="btn small ghost" id="gapResetBtn" style="color:var(--bad)">기록 초기화</button></div>' +
       '</div>' +
       '<div class="gaplayout">' +
@@ -1001,6 +1080,7 @@
       gapUi.showJump = !gapUi.showJump;
       var p = $("#gapJumpPanel"); if (p) p.classList.toggle("open", gapUi.showJump);
     });
+    $("#gapShuffleBtn").addEventListener("click", function () { gapShuffle(gapUi.subject); });
     $("#gapResetBtn").addEventListener("click", gapReset);
   }
 
@@ -1034,7 +1114,7 @@
       '<button class="btn small ghost" id="resetBtn" style="color:var(--bad)">기록 초기화</button></div>' +
       '<input type="file" id="importFile" accept="application/json" class="hide" />' +
       '</div>' +
-      '<p class="tiny muted" style="margin-top:18px;text-align:center">펀드 모의고사 v1.1 · 모의고사 ' + (QS.length || 400) + '문항 + 틈새문제 ' + (GAP.length || 300) + '문항 · 펀드투자권유자문인력 100문항/120분 기준</p>';
+      '<p class="tiny muted" style="margin-top:18px;text-align:center">펀드 모의고사 v1.1.2 · 모의고사 ' + (QS.length || 400) + '문항 + 틈새문제 ' + (GAP.length || 300) + '문항 · 펀드투자권유자문인력 100문항/120분 기준</p>';
 
     $("#immediate").addEventListener("change", function (e) { D.settings.immediate = e.target.checked; save(); toast("즉시 채점 " + (e.target.checked ? "켜짐" : "꺼짐")); });
     $("#showUnit").addEventListener("change", function (e) { D.settings.showUnit = e.target.checked; save(); });
