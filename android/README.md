@@ -11,14 +11,14 @@
 | 앱 이름 | 펀드 모의고사 |
 | applicationId | `com.donsik.fundexam` |
 | minSdk / targetSdk / compileSdk | 24 / 34 / 34 |
-| versionCode / versionName | 2 / `1.0.1` |
+| versionCode / versionName | 3 / `1.0.2` |
 | 빌드 | Gradle 8.7 · AGP 8.5.1 · Kotlin 1.9.24 · JDK 17 |
 | 서명 | 고정 릴리스 키 (CN=BadaToeic, O=Donsik, C=KR) · 키 없으면 debug 폴백 |
 
 ## 동작
 
 - 앱을 켜면 곧바로 내장 로딩 화면(`app/src/main/assets/loading.html`)이 뜬다
-  - 다크 네이비(`#061124`) 미니멀 화면 — `P` 마크 + `펀드 모의고사` 제목
+  - 다크 네이비(`#061124`) 미니멀 화면 — `F` 마크 + `펀드 모의고사` 제목
     + `펀드투자권유자문인력 · 실전 모의고사` 부제 + **얇은 슬림 프로그레스 바** + `서버 연결 중…`
   - 서버가 깨어나기 전까지 약 45초에 걸쳐 92%까지 차오르고, `window.finishLoading()` 호출 시 0.4초 만에 100%
   - 92%에 닿은 뒤에도 반짝임(shimmer)·호흡 애니메이션이 계속 살아 있고,
@@ -52,9 +52,9 @@
 GitHub Actions 가 `.github/workflows/build-apk.yml` 로 자동 빌드합니다.
 (Actions 탭 → **Build Android APK** → Run workflow, 또는 `android/**` 변경 push)
 
-산출물: `fund-exam-v1.0.1.apk`
-- Actions 실행의 Artifacts(`fund-exam-v1.0.1-apk`)
-- Release 태그 `v1.0.1` 에도 첨부
+산출물: `fund-exam-v1.0.2.apk`
+- Actions 실행의 Artifacts(`fund-exam-v1.0.2-apk`)
+- Release 태그 `v1.0.2` 에도 첨부
 
 ## 서명 (고정 키)
 
@@ -82,9 +82,12 @@ cd android && ./gradlew assembleRelease
 키스토어 원본은 저장소에 커밋하지 않습니다(백업: 워크스페이스 `work/bada_toeic_keystore/`).
 바다토익과 같은 고정 키를 쓰므로, 이 앱도 이후 업데이트를 삭제 없이 덮어쓰기 설치할 수 있습니다.
 
-## 아이콘 재생성
+## 아이콘
+
+런처 아이콘은 다크 네이비 배경 + 스카이블루 `F` 마크(기둥·가로획 두께 동일) + 아래 슬림 프로그레스 바.
+워크플로우도 빌드 직전에 같은 스크립트를 실행하므로, 스크립트만 고치면 APK 아이콘까지 함께 바뀝니다.
 
 ```bash
 pip install pillow
-python3 android/tools/make_icons.py
+python3 android/tools/make_icons.py    # mipmap-* + icon_preview.png / mark_preview.png 재생성
 ```
