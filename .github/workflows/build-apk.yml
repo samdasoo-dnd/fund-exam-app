@@ -150,12 +150,10 @@ jobs:
               print(needle.decode("utf-8", "replace"), needle in dex)
               assert needle in dex, "dex 안에 %s 가 없습니다" % needle.decode("utf-8", "replace")
           print("dex v1.0.1 fixes: OK")
-          # v1.0.2: 런처 아이콘 P → F (mipmap 아이콘 PNG 가 APK 에 들어갔는지 확인,
-          #         실제 F 도형은 빌드 전 make_icons.py 재생성 단계가 보장한다)
-          icons = [n for n in names if "ic_launcher" in n and n.endswith(".png")]
-          print("icon entries:", len(icons))
-          assert icons, "APK 안에 launcher 아이콘 PNG 가 없습니다"
-          print("icon resources: OK")
+          # v1.0.2: 로딩 화면 마크가 F 인지 확인 (런처 아이콘 PNG 는 aapt 의 application-icon 검사에서 확인)
+          loading = z.read("assets/loading.html").decode("utf-8", "replace")
+          assert '<div class="mark">F</div>' in loading, "로딩 화면 마크가 F 가 아닙니다"
+          print("loading mark F: OK")
           PY
 
       - name: 버전 · 패키지 검증 (aapt / AndroidManifest)
@@ -170,6 +168,17 @@ jobs:
             "$AAPT1" dump badging "out/$APK_NAME" | grep -q "versionName='1.0.2'" || {
               echo "::error::versionName 이 1.0.2 가 아닙니다" && exit 1; }
             echo "aapt versionCode=3 / versionName=1.0.2: OK"
+            ICON="$("$AAPT1" dump badging "out/$APK_NAME" | grep -o "application-icon-[0-9]*:'[^']*'" | head -1 | sed "s/.*:'\\(.*\\)'/\\1/")"
+            echo "application icon: ${ICON:-none}"
+            [ -n "$ICON" ] || { echo "::error::APK 에 런처 아이콘이 없습니다" && exit 1; }
+            APK_NAME="$APK_NAME" ICON_PATH="$ICON" python3 - <<'PY'
+          import os, zipfile, sys
+          p = os.path.join("out", os.environ["APK_NAME"])
+          name = os.environ["ICON_PATH"]
+          names = zipfile.ZipFile(p).namelist()
+          assert name in names, "아이콘 리소스 %s 가 APK 안에 없습니다" % name
+          print("application icon resource: OK", name)
+          PY
           fi
           python3 - <<'PY'
           import os, zipfile
