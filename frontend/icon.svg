@@ -3,5 +3,5 @@
     <stop offset="0" stop-color="#38bdf8"/><stop offset="1" stop-color="#0ea5e9"/></linearGradient></defs>
   <rect width="64" height="64" rx="16" fill="#0f2240"/>
   <rect x="10" y="10" width="44" height="44" rx="12" fill="url(#g)"/>
-  <path d="M24 44V20h10a8 8 0 0 1 0 16h-10" fill="none" stroke="#04121f" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M24 18H40V23H29V30.5H37V35.5H29V44H24Z" fill="#04121f"/>
 </svg>
