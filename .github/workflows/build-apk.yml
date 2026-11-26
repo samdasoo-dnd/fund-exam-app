@@ -19,8 +19,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  APP_VERSION: '1.0.1'
-  APK_NAME: fund-exam-v1.0.1.apk
+  APP_VERSION: '1.0.2'
+  APK_NAME: fund-exam-v1.0.2.apk
 
 jobs:
   build:
@@ -78,6 +78,13 @@ jobs:
             echo "::warning::ANDROID_KEYSTORE_BASE64 Secret 이 없어 debug 서명으로 빌드합니다."
           fi
 
+      - name: 런처 아이콘 재생성 (F 마크)
+        run: |
+          set -e
+          python3 -m pip install --quiet --disable-pip-version-check pillow
+          python3 android/tools/make_icons.py
+          ls -l android/app/src/main/res/mipmap-xxxhdpi/
+
       - name: Build APK
         working-directory: android
         env:
@@ -132,7 +139,7 @@ jobs:
               assert needle in dex, "dex 안에 %s 문자열이 없습니다" % needle.decode()
           print("dex save-store bridge: OK")
           for needle in (b"fund-exam-app.onrender.com", b"attemptFailed",
-                         b"FundExamAndroid/1.0.1", b"api/health"):
+                         b"FundExamAndroid/1.0.2", b"api/health"):
               print(needle.decode(), needle in dex)
               assert needle in dex, "dex 안에 %s 문자열이 없습니다" % needle.decode()
           print("dex health/retry wiring: OK")
@@ -143,6 +150,12 @@ jobs:
               print(needle.decode("utf-8", "replace"), needle in dex)
               assert needle in dex, "dex 안에 %s 가 없습니다" % needle.decode("utf-8", "replace")
           print("dex v1.0.1 fixes: OK")
+          # v1.0.2: 런처 아이콘 P → F (mipmap 아이콘 PNG 가 APK 에 들어갔는지 확인,
+          #         실제 F 도형은 빌드 전 make_icons.py 재생성 단계가 보장한다)
+          icons = [n for n in names if "ic_launcher" in n and n.endswith(".png")]
+          print("icon entries:", len(icons))
+          assert icons, "APK 안에 launcher 아이콘 PNG 가 없습니다"
+          print("icon resources: OK")
           PY
 
       - name: 버전 · 패키지 검증 (aapt / AndroidManifest)
@@ -152,11 +165,11 @@ jobs:
           echo "aapt: ${AAPT1:-none}"
           if [ -n "$AAPT1" ]; then
             "$AAPT1" dump badging "out/$APK_NAME" | grep -E "package:|application-label" || true
-            "$AAPT1" dump badging "out/$APK_NAME" | grep -q "versionCode='2'" || {
-              echo "::error::versionCode 가 2 가 아닙니다" && exit 1; }
-            "$AAPT1" dump badging "out/$APK_NAME" | grep -q "versionName='1.0.1'" || {
-              echo "::error::versionName 이 1.0.1 이 아닙니다" && exit 1; }
-            echo "aapt versionCode=2 / versionName=1.0.1: OK"
+            "$AAPT1" dump badging "out/$APK_NAME" | grep -q "versionCode='3'" || {
+              echo "::error::versionCode 가 3 이 아닙니다" && exit 1; }
+            "$AAPT1" dump badging "out/$APK_NAME" | grep -q "versionName='1.0.2'" || {
+              echo "::error::versionName 이 1.0.2 가 아닙니다" && exit 1; }
+            echo "aapt versionCode=3 / versionName=1.0.2: OK"
           fi
           python3 - <<'PY'
           import os, zipfile
@@ -165,8 +178,8 @@ jobs:
           def has(s):
               return s.encode("utf-8") in data or s.encode("utf-16-le") in data
           assert has("com.donsik.fundexam"), "AndroidManifest 에 package com.donsik.fundexam 이 없습니다"
-          assert has("1.0.1"), "AndroidManifest 에 versionName 1.0.1 이 없습니다"
-          print("package com.donsik.fundexam / versionName 1.0.1: OK")
+          assert has("1.0.2"), "AndroidManifest 에 versionName 1.0.2 가 없습니다"
+          print("package com.donsik.fundexam / versionName 1.0.2: OK")
           PY
 
       - name: 서명 검증 (고정 키 인증서 확인)
@@ -192,25 +205,25 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: fund-exam-v1.0.1-apk
-          path: out/fund-exam-v1.0.1.apk
+          name: fund-exam-v1.0.2-apk
+          path: out/fund-exam-v1.0.2.apk
           if-no-files-found: error
           retention-days: 90
 
-      - name: Attach APK to GitHub Release (v1.0.1)
+      - name: Attach APK to GitHub Release (v1.0.2)
         continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -e
-          if gh release view v1.0.1 > /dev/null 2>&1; then
-            gh release upload v1.0.1 "out/$APK_NAME" --clobber
-            gh release edit v1.0.1 \
-              --title "펀드 모의고사 v1.0.1 (Android APK)" \
-              --notes-file .github/release-notes-v1.0.1.md
+          if gh release view v1.0.2 > /dev/null 2>&1; then
+            gh release upload v1.0.2 "out/$APK_NAME" --clobber
+            gh release edit v1.0.2 \
+              --title "펀드 모의고사 v1.0.2 (Android APK)" \
+              --notes-file .github/release-notes-v1.0.2.md
           else
-            gh release create v1.0.1 \
-              --title "펀드 모의고사 v1.0.1 (Android APK)" \
-              --notes-file .github/release-notes-v1.0.1.md
-            gh release upload v1.0.1 "out/$APK_NAME" --clobber
+            gh release create v1.0.2 \
+              --title "펀드 모의고사 v1.0.2 (Android APK)" \
+              --notes-file .github/release-notes-v1.0.2.md
+            gh release upload v1.0.2 "out/$APK_NAME" --clobber
           fi
