@@ -67,7 +67,7 @@ class MainActivity : Activity() {
         private const val START_URL = "https://fund-exam-app.onrender.com"
         private const val BASE_HOST = "fund-exam-app.onrender.com"
         private const val HEALTH_URL = "https://fund-exam-app.onrender.com/api/health"
-        private const val USER_AGENT = "FundExamAndroid/1.0.1"
+        private const val USER_AGENT = "FundExamAndroid/1.0.2"
         private const val LOCAL_LOADING_URL = "file:///android_asset/loading.html"
         private const val REQ_SAVE_FILE = 1001
         private const val STORE_PREFS = "fund_exam_store"
